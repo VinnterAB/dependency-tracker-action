@@ -22,8 +22,10 @@ if [ -z "$ISLATEST" ]; then
     ISLATEST="false"
 fi
 
-INSECURE="--insecure"
+#INSECURE="--insecure"
 #VERBOSE="--verbose"
+
+curl_timeout_seconds=60
 
 # Access directory where GitHub will mount the repository code
 # $GITHUB_ variables are directly accessible in the script
@@ -32,7 +34,7 @@ cd $GITHUB_WORKSPACE
 # Handle delete action
 if [ "$ACTION" = "delete" ]; then
     echo "[*] Retrieving project information for deletion"
-    project=$(curl $INSECURE $VERBOSE -s --location --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
+    project=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
     --header "X-Api-Key: $DTRACK_KEY")
     
     if [ -z "$project" ] || [ "$project" = "null" ]; then
@@ -48,7 +50,7 @@ if [ "$ACTION" = "delete" ]; then
     fi
     
     echo "[*] Deleting project with UUID: $project_uuid"
-    delete_response=$(curl $INSECURE $VERBOSE -s --location --request DELETE "$DTRACK_URL/api/v1/project/$project_uuid" \
+    delete_response=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request DELETE "$DTRACK_URL/api/v1/project/$project_uuid" \
     --header "X-Api-Key: $DTRACK_KEY" \
     --write-out "HTTPSTATUS:%{http_code}")
     
@@ -196,12 +198,14 @@ echo "[*] Checking BoM processing status"
 processing=$(curl $INSECURE $VERBOSE -s --location --request GET $DTRACK_URL/api/v1/bom/token/$token \
 --header "X-Api-Key: $DTRACK_KEY" | jq '.processing')
 
-
+c=0
+max_loops=10
 while [ $processing = true ]; do
     sleep 5
-    processing=$(curl  $INSECURE $VERBOSE -s --location --request GET $DTRACK_URL/api/v1/bom/token/$token \
+    processing=$(curl  $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET $DTRACK_URL/api/v1/bom/token/$token \
 --header "X-Api-Key: $DTRACK_KEY" | jq '.processing')
-    if [ $((++c)) -eq 10 ]; then
+    c=$((c + 1))
+    if [ "$c" -ge "$max_loops" ]; then
         echo "[-]  Timeout while waiting for processing result. Please check the OWASP Dependency Track status."
         exit 1
     fi
@@ -213,7 +217,7 @@ echo "[*] OWASP Dependency Track processing completed"
 sleep 5
 
 echo "[*] Retrieving project information"
-project=$(curl  $INSECURE $VERBOSE -s --location --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
+project=$(curl  $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
 --header "X-Api-Key: $DTRACK_KEY")
 
 echo "$project"
