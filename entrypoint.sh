@@ -4,10 +4,22 @@ DTRACK_URL=$1
 DTRACK_KEY=$2
 LANGUAGE=$3
 VERSION=$4
+ACTION=$5
+ISLATEST=$6
 
 # Use provided version or fallback to git ref
 if [ -z "$VERSION" ]; then
     VERSION=$GITHUB_REF
+fi
+
+# Use provided action or fallback to upload
+if [ -z "$ACTION" ]; then
+    ACTION="upload"
+fi
+
+# Use provided isLatest or fallback to false
+if [ -z "$ISLATEST" ]; then
+    ISLATEST="false"
 fi
 
 INSECURE="--insecure"
@@ -16,6 +28,40 @@ INSECURE="--insecure"
 # Access directory where GitHub will mount the repository code
 # $GITHUB_ variables are directly accessible in the script
 cd $GITHUB_WORKSPACE
+
+# Handle delete action
+if [ "$ACTION" = "delete" ]; then
+    echo "[*] Retrieving project information for deletion"
+    project=$(curl $INSECURE $VERBOSE -s --location --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
+    --header "X-Api-Key: $DTRACK_KEY")
+    
+    if [ -z "$project" ] || [ "$project" = "null" ]; then
+        echo "[-] Project not found: $GITHUB_REPOSITORY version $VERSION"
+        exit 1
+    fi
+    
+    project_uuid=$(echo $project | jq -r ".uuid")
+    
+    if [ -z "$project_uuid" ] || [ "$project_uuid" = "null" ]; then
+        echo "[-] Could not retrieve project UUID for: $GITHUB_REPOSITORY version $VERSION"
+        exit 1
+    fi
+    
+    echo "[*] Deleting project with UUID: $project_uuid"
+    delete_response=$(curl $INSECURE $VERBOSE -s --location --request DELETE "$DTRACK_URL/api/v1/project/$project_uuid" \
+    --header "X-Api-Key: $DTRACK_KEY" \
+    --write-out "HTTPSTATUS:%{http_code}")
+    
+    http_status=$(echo $delete_response | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+    
+    if [ "$http_status" = "204" ]; then
+        echo "[*] Project deleted successfully: $GITHUB_REPOSITORY version $VERSION"
+        exit 0
+    else
+        echo "[-] Failed to delete project. HTTP status: $http_status"
+        exit 1
+    fi
+fi
 
 case $LANGUAGE in
     "nodejs")
@@ -134,6 +180,7 @@ upload_bom=$(curl $INSECURE $VERBOSE -s --location --request POST $DTRACK_URL/ap
 --form "autoCreate=true" \
 --form "projectName=$GITHUB_REPOSITORY" \
 --form "projectVersion=$VERSION" \
+--form "isLatest=$ISLATEST" \
 --form "bom=@sbom.xml")
 
 token=$(echo $upload_bom | jq ".token" | tr -d "\"")

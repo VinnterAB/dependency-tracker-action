@@ -21,6 +21,14 @@ inputs:
   version:
     description: 'Version to send to Dependency Track (defaults to git ref)'
     required: false
+  action:
+    description: 'Action to perform: upload or delete (defaults to upload)'
+    required: false
+    default: 'upload'
+  isLatest:
+    description: 'Mark this version as the latest version (defaults to false)'
+    required: false
+    default: 'false'
 
 outputs:
   riskscore:
@@ -34,4 +42,6 @@ runs:
     - ${{ inputs.key }}
     - ${{ inputs.language }}
     - ${{ inputs.version }}
+    - ${{ inputs.action }}
+    - ${{ inputs.isLatest }}
 
