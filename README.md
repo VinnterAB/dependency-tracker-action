@@ -7,7 +7,7 @@ The project will be uploaded to the OWASP Dependency Track server using the repo
 
 We recommend to use the version tags to chose the specific action version which works fine in your workflow and OWASP Dependency Track version. However the main branch can also be used since we are not expecting to include breaking changes in future versions.
 
-**OWASP Dependency Track v4.0.1** has been successfully tested with tags **v.1**, **v1.0**,**v1.1** and **1.2**.
+**OWASP Dependency Track v4.13.5** has been successfully tested with tags **v.1**, **v1.0**,**v1.1** and **1.2**.
 
 Feedback, contributions, bug reports and improvements issues are really welcome.
 
@@ -39,6 +39,8 @@ Currently this action supports the generation of upload of projects developed in
 
 Please note that if any of the files above is not available the action will fail when trying to generate the BoM files.
 
+## Required Access rights.
+This script require an API key with the following access rights to work: VIEW_PORTFOLIO, BOM_UPLOAD, PROJECT_CREATION_UPLOAD.
 
 ## How to use it
 Github provides really helpful resources to learn to include any action in your workflow. This [Introduction to actions](https://docs.github.com/en/actions/learn-github-actions/introduction-to-github-actions) may be specially useful for beginners. However, we've add some of the steps you'll have to go through in order to get it up and running. You can also check this [video (OWASP Dependency Track check: how to use it in Maven projects)](https://www.youtube.com/watch?v=L9ItYhv37wo&t=3s).

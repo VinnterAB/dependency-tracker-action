@@ -174,12 +174,32 @@ echo "[*] Cyclonedx CLI conversion"
 #Does not upload to dtrack when output format = xml (every version available)
 cyclonedx-cli convert --input-file $path --output-file sbom.xml --output-format json_v1_2
 
+echo "[*] Uploading BoM file to Dependency Track server"
+
+# Try to find parent project UUID (top-level project with same name)
+echo "[*] Looking up parent project for: $GITHUB_REPOSITORY"
+parent_projects=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project?name=$GITHUB_REPOSITORY" \
+--header "X-Api-Key: $DTRACK_KEY" 2>/dev/null)
+
+
+# Extract the UUID of the first project with matching name (assumed to be parent/top-level)
+parent_uuid=$(echo $parent_projects | jq -r '.[0].uuid // empty')
+
+if [ -n "$parent_uuid" ] && [ "$parent_uuid" != "null" ]; then
+    echo "[*] Found parent project UUID: $parent_uuid"
+    PARENT_UUID_PARAM="--form parentUUID=$parent_uuid"
+else
+    echo "[*] No parent project found, creating as standalone"
+    PARENT_UUID_PARAM=""
+fi
+
 # UPLOAD BoM to Dependency track server
 echo "[*] Uploading BoM file to Dependency Track server"
 upload_bom=$(curl $INSECURE $VERBOSE -s --location --request POST $DTRACK_URL/api/v1/bom \
 --header "X-Api-Key: $DTRACK_KEY" \
 --header "Content-Type: multipart/form-data" \
 --form "autoCreate=true" \
+$PARENT_UUID_PARAM \
 --form "projectName=$GITHUB_REPOSITORY" \
 --form "projectVersion=$VERSION" \
 --form "isLatest=$ISLATEST" \
@@ -195,15 +215,20 @@ if [ -z $token ]; then
 fi
 
 echo "[*] Checking BoM processing status"
-processing=$(curl $INSECURE $VERBOSE -s --location --request GET $DTRACK_URL/api/v1/bom/token/$token \
---header "X-Api-Key: $DTRACK_KEY" | jq '.processing')
+event_response=$(curl $INSECURE $VERBOSE -s --location --request GET $DTRACK_URL/api/v1/event/token/$token \
+--header "X-Api-Key: $DTRACK_KEY")
+
+echo "[*] Event info: $event_response"
+processing=$(echo $event_response | jq '.processing')
 
 c=0
 max_loops=10
 while [ $processing = true ]; do
     sleep 5
-    processing=$(curl  $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET $DTRACK_URL/api/v1/bom/token/$token \
---header "X-Api-Key: $DTRACK_KEY" | jq '.processing')
+    event_response=$(curl  $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET $DTRACK_URL/api/v1/event/token/$token \
+--header "X-Api-Key: $DTRACK_KEY")
+    echo "[*] Event info: $event_response"
+    processing=$(echo $event_response | jq '.processing')
     c=$((c + 1))
     if [ "$c" -ge "$max_loops" ]; then
         echo "[-]  Timeout while waiting for processing result. Please check the OWASP Dependency Track status."
