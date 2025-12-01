@@ -176,21 +176,59 @@ cyclonedx-cli convert --input-file $path --output-file sbom.xml --output-format 
 
 echo "[*] Uploading BoM file to Dependency Track server"
 
-# Try to find parent project UUID (top-level project with same name)
-echo "[*] Looking up parent project for: $GITHUB_REPOSITORY"
-parent_projects=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project?name=$GITHUB_REPOSITORY" \
+# 1) First, check if exact name/version combination exists
+echo "[*] Looking up exact project match for: $GITHUB_REPOSITORY version $VERSION"
+exact_project=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project/lookup?name=$GITHUB_REPOSITORY&version=$VERSION" \
 --header "X-Api-Key: $DTRACK_KEY" 2>/dev/null)
 
+exact_uuid=$(echo $exact_project | jq -r '.uuid // empty')
 
-# Extract the UUID of the first project with matching name (assumed to be parent/top-level)
-parent_uuid=$(echo $parent_projects | jq -r '.[0].uuid // empty')
-
-if [ -n "$parent_uuid" ] && [ "$parent_uuid" != "null" ]; then
-    echo "[*] Found parent project UUID: $parent_uuid"
-    PARENT_UUID_PARAM="--form parentUUID=$parent_uuid"
-else
-    echo "[*] No parent project found, creating as standalone"
+if [ -n "$exact_uuid" ] && [ "$exact_uuid" != "null" ]; then
+    # Case 1: Exact match found - use project UUID directly
+    echo "[*] Found exact project match with UUID: $exact_uuid"
+    PROJECT_UUID_PARAM="--form project=$exact_uuid"
     PARENT_UUID_PARAM=""
+    PROJECT_NAME_PARAM=""
+    PROJECT_VERSION_PARAM=""
+else
+    # 2) Look for parent project with same name but no/empty version
+    echo "[*] No exact match found. Looking up parent project with empty version: $GITHUB_REPOSITORY"
+    parent_projects=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request GET "$DTRACK_URL/api/v1/project?name=$GITHUB_REPOSITORY" \
+    --header "X-Api-Key: $DTRACK_KEY" 2>/dev/null)
+    
+    # Find project with matching name and empty/null version
+    parent_uuid=$(echo $parent_projects | jq -r '.[] | select(.version == null or .version == "") | .uuid' | head -n 1)
+    
+    if [ -n "$parent_uuid" ] && [ "$parent_uuid" != "null" ]; then
+        # Case 2: Parent with empty version found
+        echo "[*] Found parent project with empty version, UUID: $parent_uuid"
+        PROJECT_UUID_PARAM=""
+        PARENT_UUID_PARAM="--form parentUUID=$parent_uuid"
+        PROJECT_NAME_PARAM="--form projectName=$GITHUB_REPOSITORY"
+        PROJECT_VERSION_PARAM="--form projectVersion=$VERSION"
+    else
+        # Case 3: No parent found - will auto-create parent with empty version
+        echo "[*] No parent project found. Will auto-create parent with empty version"
+        # First, create the parent project with empty version
+        echo "[*] Creating parent project: $GITHUB_REPOSITORY (empty version)"
+        parent_create=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request PUT "$DTRACK_URL/api/v1/project" \
+        --header "X-Api-Key: $DTRACK_KEY" \
+        --header "Content-Type: application/json" \
+        --data-raw "{\"name\":\"$GITHUB_REPOSITORY\",\"version\":\"\"}" 2>/dev/null)
+        
+        parent_uuid=$(echo $parent_create | jq -r '.uuid // empty')
+        
+        if [ -n "$parent_uuid" ] && [ "$parent_uuid" != "null" ]; then
+            echo "[*] Created parent project with UUID: $parent_uuid"
+            PROJECT_UUID_PARAM=""
+            PARENT_UUID_PARAM="--form parentUUID=$parent_uuid"
+            PROJECT_NAME_PARAM="--form projectName=$GITHUB_REPOSITORY"
+            PROJECT_VERSION_PARAM="--form projectVersion=$VERSION"
+        else
+            echo "[-] Failed to create parent project"
+            exit 1
+        fi
+    fi
 fi
 
 # UPLOAD BoM to Dependency track server
@@ -199,9 +237,10 @@ upload_bom=$(curl $INSECURE $VERBOSE -s --location --request POST $DTRACK_URL/ap
 --header "X-Api-Key: $DTRACK_KEY" \
 --header "Content-Type: multipart/form-data" \
 --form "autoCreate=true" \
+$PROJECT_UUID_PARAM \
 $PARENT_UUID_PARAM \
---form "projectName=$GITHUB_REPOSITORY" \
---form "projectVersion=$VERSION" \
+$PROJECT_NAME_PARAM \
+$PROJECT_VERSION_PARAM \
 --form "isLatest=$ISLATEST" \
 --form "bom=@sbom.xml")
 
