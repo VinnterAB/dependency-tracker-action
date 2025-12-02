@@ -233,7 +233,7 @@ fi
 
 # UPLOAD BoM to Dependency track server
 echo "[*] Uploading BoM file to Dependency Track server"
-upload_bom=$(curl $INSECURE $VERBOSE -s --location --request POST $DTRACK_URL/api/v1/bom \
+upload_bom=$(curl $INSECURE $VERBOSE -s --location --max-time $curl_timeout_seconds --request POST $DTRACK_URL/api/v1/bom \
 --header "X-Api-Key: $DTRACK_KEY" \
 --header "Content-Type: multipart/form-data" \
 --form "autoCreate=true" \
@@ -242,14 +242,59 @@ $PARENT_UUID_PARAM \
 $PROJECT_NAME_PARAM \
 $PROJECT_VERSION_PARAM \
 --form "isLatest=$ISLATEST" \
---form "bom=@sbom.xml")
+--form "bom=@sbom.xml" \
+--write-out "\n%{http_code}" 2>&1)
 
-token=$(echo $upload_bom | jq ".token" | tr -d "\"")
-echo "[*] BoM file succesfully uploaded with token $token"
+curl_exit_code=$?
+http_code=$(echo "$upload_bom" | tail -n1)
+response_body=$(echo "$upload_bom" | sed '$d')
 
+# Check for curl failure
+if [ $curl_exit_code -ne 0 ]; then
+    echo "[-] curl command failed with exit code $curl_exit_code"
+    echo "Common causes:"
+    echo "  - Connection refused: Is Dependency Track running on $DTRACK_URL?"
+    echo "  - Network timeout: Server may be unreachable"
+    echo "  - DNS resolution failure: Check the URL"
+    exit 1
+fi
 
-if [ -z $token ]; then
-    echo "[-]  The BoM file has not been successfully processed by OWASP Dependency Track"
+# Check for HTTP 000 (usually indicates connection failure)
+if [ "$http_code" = "000" ] || [ -z "$http_code" ]; then
+    echo "[-] Failed to connect to Dependency Track server at $DTRACK_URL"
+    exit 1
+fi
+
+if [ "$http_code" = "400" ]; then
+    echo "[-] Invalid BOM detected (HTTP 400). Details:"
+    echo "$response_body" | jq -r '
+        "Title: " + (.title // "N/A"),
+        "Detail: " + (.detail // "N/A"),
+        (if .errors then "Validation Errors:" else empty end),
+        (if .errors then (.errors[] | "  - " + .) else empty end)
+    ' 2>/dev/null || echo "$response_body"
+    exit 1
+elif [ "$http_code" = "401" ]; then
+    echo "[-] Authentication failed (HTTP 401). Check your API key."
+    exit 1
+elif [ "$http_code" = "403" ]; then
+    echo "[-] Access forbidden (HTTP 403). Insufficient permissions."
+    exit 1
+elif [ "$http_code" = "404" ]; then
+    echo "[-] Project not found (HTTP 404)."
+    exit 1
+elif [ "$http_code" != "200" ]; then
+    echo "[-] BOM upload failed with HTTP $http_code"
+    echo "Response: $response_body"
+    exit 1
+fi
+
+token=$(echo "$response_body" | jq -r ".token // empty")
+echo "[*] BoM file successfully uploaded with token $token"
+
+if [ -z "$token" ]; then
+    echo "[-] The BoM file has not been successfully processed by OWASP Dependency Track"
+    echo "Response: $response_body"
     exit 1
 fi
 
@@ -290,4 +335,37 @@ project_uuid=$(echo $project | jq ".uuid" | tr -d "\"")
 risk_score=$(echo $project | jq ".lastInheritedRiskScore")
 echo "Project risk score: $risk_score"
 
+# Check for policy violations
+policy_violations_fail=$(echo $project | jq ".metrics.policyViolationsFail // 0")
+policy_violations_warn=$(echo $project | jq ".metrics.policyViolationsWarn // 0")
+policy_violations_info=$(echo $project | jq ".metrics.policyViolationsInfo // 0")
+policy_violations_total=$(echo $project | jq ".metrics.policyViolationsTotal // 0")
+
+# Breakdown by type
+policy_violations_license=$(echo $project | jq ".metrics.policyViolationsLicenseTotal // 0")
+policy_violations_security=$(echo $project | jq ".metrics.policyViolationsSecurityTotal // 0")
+policy_violations_operational=$(echo $project | jq ".metrics.policyViolationsOperationalTotal // 0")
+
+echo "[*] Policy Violations Summary:"
+echo "    Total: $policy_violations_total (Fail: $policy_violations_fail, Warn: $policy_violations_warn, Info: $policy_violations_info)"
+if [ "$policy_violations_license" -gt 0 ]; then
+    echo "    License violations: $policy_violations_license"
+fi
+if [ "$policy_violations_security" -gt 0 ]; then
+    echo "    Security violations: $policy_violations_security"
+fi
+if [ "$policy_violations_operational" -gt 0 ]; then
+    echo "    Operational violations: $policy_violations_operational"
+fi
+
 echo "riskscore=$risk_score" >> "$GITHUB_OUTPUT"
+echo "policy_violations_fail=$policy_violations_fail" >> "$GITHUB_OUTPUT"
+echo "policy_violations_warn=$policy_violations_warn" >> "$GITHUB_OUTPUT"
+echo "policy_violations_total=$policy_violations_total" >> "$GITHUB_OUTPUT"
+
+# Fail the action if there are policy violations marked as "fail"
+if [ "$policy_violations_fail" -gt 0 ]; then
+    echo "[-] Build failed due to $policy_violations_fail policy violation(s) with 'fail' severity"
+    echo "    View details at: $DTRACK_URL/projects/$project_uuid"
+    exit 1
+fi
