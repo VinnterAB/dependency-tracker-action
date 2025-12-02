@@ -26,6 +26,9 @@ This action requires the following input variables:
 
 ## Output variables
 - **riskscore**: this variable will contain the risk score calculated by OWASP Dependency Track based on the found vulnerabilities. This output can be used to make decision such as notify the developer or use it as the input of the next step of the workflow.
+- **policy_violations_fail**: number of policy violations with "fail" severity. The action will fail if this value is greater than 0.
+- **policy_violations_warn**: number of policy violations with "warn" severity.
+- **policy_violations_total**: total number of policy violations across all severity levels (fail, warn, and info).
 ## Supported languages
 Currently this action supports the generation of upload of projects developed in the languages as follows:
 - **Node.js**: define the language variable as `nodejs`. `npm install` will be executed within the container to gather all the dependencies.
@@ -149,3 +152,5 @@ The repository files are mounted in the Dockerfile in `/github/workspace` direct
 This project was made possible thanks to [SCRATCh](https://itea4.org/project/scratch.html), an ITEA3 project.
 
 Authors: [Antón Román](https://github.com/antonroman), [Manuel Alonso](https://github.com/macarracedo).
+
+Additional modifications done by [Vinnter AB](http://www.vinnter.se).
